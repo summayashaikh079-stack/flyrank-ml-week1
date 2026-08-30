@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Does a Refresh-Priority Model Beat a Simple Rule? — Summaya Shaikh</title>
+<meta name="description" content="An honest, client-grouped evaluation of a Random Forest content-refresh-priority model against a simple CTR-vs-position rule, on FlyRank's 79M-row production search warehouse.">
+<meta property="og:title" content="Does a Refresh-Priority Model Beat a Simple Rule?">
+<meta property="og:description" content="A naive split said yes. An honest, client-grouped split said not yet. Built on 79M rows of real production search data.">
+<meta property="og:type" content="article">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F5F3EE;
+    --paper-2:#EDEAE1;
+    --ink:#181B20;
+    --ink-soft:#54585F;
+    --box-blue:#2F5CFF;
+    --box-blue-soft:#E7ECFF;
+    --amber:#D98E2B;
+    --amber-soft:#FBEEDA;
+    --green:#1E8E5A;
+    --green-soft:rgba(30,142,90,0.1);
+    --red:#C43D3D;
+    --red-soft:#FBE9E9;
+    --line: rgba(24,27,32,0.14);
+    --card:#FFFFFF;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter', sans-serif;
+    line-height:1.65;
+    overflow-x:hidden;
+  }
+  ::selection{ background:var(--box-blue); color:#fff; }
+  .mono{ font-family:'JetBrains Mono', monospace; }
+  a{ color:inherit; text-decoration:none; }
+
+  .grid-bg{
+    position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 42px 42px;
+    opacity:0.5;
+    mask-image: radial-gradient(circle at 50% 0%, black 0%, transparent 75%);
+  }
+
+  .wrap{ max-width:900px; margin:0 auto; padding:0 28px; }
+  section{ padding:64px 0; border-bottom:1px solid var(--line); scroll-margin-top:90px; }
+  section:last-of-type{ border-bottom:none; }
+
+  header{
+    position:sticky; top:0; z-index:50;
+    backdrop-filter: blur(10px);
+    background:rgba(245,243,238,0.9);
+    border-bottom:1px solid var(--line);
+  }
+  .nav-inner{
+    max-width:900px; margin:0 auto; padding:16px 28px;
+    display:flex; align-items:center; justify-content:space-between; gap:20px;
+  }
+  .logo{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:1rem; display:flex; align-items:center; gap:8px; flex-shrink:0;}
+  .logo .dot{ width:7px; height:7px; background:var(--box-blue); border-radius:50%; display:inline-block; }
+  .toc-scroll{ display:flex; gap:18px; overflow-x:auto; scrollbar-width:none; }
+  .toc-scroll::-webkit-scrollbar{ display:none; }
+  .toc-scroll a{ font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:var(--ink-soft); white-space:nowrap; text-transform:uppercase; letter-spacing:0.03em;}
+  .toc-scroll a:hover{ color:var(--box-blue); }
+
+  .tag{
+    display:inline-flex; align-items:center; gap:6px;
+    font-family:'JetBrains Mono', monospace; font-size:0.72rem;
+    color:var(--box-blue); background:var(--box-blue-soft);
+    border:1px solid rgba(47,92,255,0.35);
+    padding:3px 9px; border-radius:3px; letter-spacing:0.02em;
+  }
+  .tag::before{ content:'▣'; font-size:0.8em; }
+  .tag.red{ color:var(--red); background:var(--red-soft); border-color:rgba(196,61,61,0.35); }
+  .tag.green{ color:var(--green); background:var(--green-soft); border-color:rgba(30,142,90,0.35); }
+
+  /* hero */
+  .hero{ padding-top:64px; padding-bottom:56px; }
+  .eyebrow-row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:22px; }
+  .hero h1{
+    font-family:'Space Grotesk', sans-serif; font-weight:700;
+    font-size:clamp(2rem, 5.2vw, 3.1rem); line-height:1.08; letter-spacing:-0.01em; margin-bottom:22px;
+  }
+  .hero h1 .strike{ color:var(--ink-soft); text-decoration:line-through; text-decoration-color:var(--red); text-decoration-thickness:2.5px; }
+  .hero h1 span.accent{ color:var(--box-blue); }
+  .byline{ font-family:'JetBrains Mono', monospace; color:var(--ink-soft); font-size:0.88rem; margin-bottom:8px; }
+  .byline a{ color:var(--box-blue); }
+
+  /* signature: the confidence-drop bbox */
+  .signature{ margin-top:40px; position:relative; }
+  .bbox{ position:relative; border:1.5px solid var(--box-blue); border-radius:2px; }
+  .bbox.red-b{ border-color:var(--red); }
+  .corner{ position:absolute; width:10px; height:10px; border-color:var(--box-blue); border-style:solid; }
+  .bbox.red-b .corner{ border-color:var(--red); }
+  .corner.tl{ top:-1.5px; left:-1.5px; border-width:2.5px 0 0 2.5px; }
+  .corner.tr{ top:-1.5px; right:-1.5px; border-width:2.5px 2.5px 0 0; }
+  .corner.bl{ bottom:-1.5px; left:-1.5px; border-width:0 0 2.5px 2.5px; }
+  .corner.br{ bottom:-1.5px; right:-1.5px; border-width:0 2.5px 2.5px 0; }
+  .conf-label{
+    position:absolute; top:-13px; left:-1.5px; background:var(--box-blue); color:#fff;
+    font-family:'JetBrains Mono', monospace; font-size:0.65rem; padding:2px 7px; border-radius:2px 2px 2px 0; white-space:nowrap;
+  }
+  .conf-label.red-l{ background:var(--red); }
+
+  .signature{ box-shadow:0 4px 8px rgba(47,92,255,0.06), 0 20px 44px rgba(47,92,255,0.09); border-radius:8px; }
+  .sig-grid{ display:grid; grid-template-columns:1fr 1fr; gap:18px; padding:34px 28px 24px; }
+  @media (max-width:640px){ .sig-grid{ grid-template-columns:1fr; } }
+  .sig-num{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:2.4rem; }
+  .sig-num.red{ color:var(--red); }
+  .sig-num.blue{ color:var(--box-blue); }
+  .sig-label{ font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:var(--ink-soft); text-transform:uppercase; letter-spacing:0.03em; margin-top:2px;}
+  .sig-sub{ font-size:0.85rem; color:var(--ink-soft); margin-top:8px; }
+
+  /* section head */
+  .sec-head{ margin-bottom:32px; }
+  .sec-eyebrow{ display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .sec-eyebrow .idx{ font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:var(--box-blue); }
+  .sec-eyebrow .rule{ height:1px; width:28px; background:var(--box-blue); }
+  .sec-head h2{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:clamp(1.5rem, 3.4vw, 2rem); }
+
+  .prose p{ color:var(--ink-soft); margin-bottom:14px; }
+  .prose p:last-child{ margin-bottom:0; }
+  .prose strong{ color:var(--ink); font-weight:600; }
+  .prose ul, .prose ol{ color:var(--ink-soft); margin: 6px 0 16px 22px; }
+  .prose li{ margin-bottom:6px; }
+
+  .callout{ background:var(--card); border:1px solid var(--line); border-left:3px solid var(--box-blue); border-radius:8px; padding:16px 20px; margin:18px 0; font-size:0.92rem; color:var(--ink-soft); box-shadow:0 1px 2px rgba(24,27,32,0.04), 0 8px 20px rgba(24,27,32,0.04); }
+  .callout.warn{ border-left-color:var(--amber); }
+  .callout strong{ color:var(--ink); }
+
+  /* info card / table */
+  .info-card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:22px 24px; margin:18px 0; box-shadow:0 1px 2px rgba(24,27,32,0.04), 0 10px 28px rgba(24,27,32,0.05); }
+  .info-row{ display:flex; justify-content:space-between; gap:20px; padding:9px 0; border-bottom:1px solid var(--line); font-size:0.85rem; }
+  .info-row:last-child{ border-bottom:none; }
+  .info-row .k{ color:var(--ink-soft); font-family:'JetBrains Mono', monospace; font-size:0.75rem; flex-shrink:0; }
+  .info-row .v{ font-weight:500; text-align:right; }
+
+  table.data-table{ width:100%; border-collapse:collapse; margin:18px 0; font-size:0.86rem; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:0 1px 2px rgba(24,27,32,0.04), 0 10px 28px rgba(24,27,32,0.05); }
+  table.data-table th, table.data-table td{ padding:13px 16px; text-align:right; border-bottom:1px solid var(--line); }
+  table.data-table th:first-child, table.data-table td:first-child{ text-align:left; }
+  table.data-table th{ font-family:'JetBrains Mono', monospace; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-soft); background:var(--paper-2); }
+  table.data-table tr:last-child td{ border-bottom:none; }
+  table.data-table tr.hl td{ background:var(--box-blue-soft); font-weight:600; position:relative; }
+  table.data-table tr.hl td:first-child::before{ content:'●'; color:var(--box-blue); margin-right:8px; font-size:0.6rem; vertical-align:middle; }
+  table.data-table tr.dim td{ color:var(--ink-soft); }
+
+  .chart-card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:26px 26px 22px; margin:20px 0; box-shadow:0 1px 2px rgba(24,27,32,0.04), 0 10px 28px rgba(24,27,32,0.05); }
+  .chart-caption{ font-size:0.83rem; color:var(--ink-soft); margin-top:14px; border-top:1px solid var(--line); padding-top:14px; }
+  .chart-caption strong{ color:var(--ink); }
+
+  .split-diagram{ display:grid; grid-template-columns:1fr 1fr; gap:22px; margin:22px 0; }
+  @media (max-width:640px){ .split-diagram{ grid-template-columns:1fr; } }
+  .split-panel{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; box-shadow:0 1px 2px rgba(24,27,32,0.04), 0 10px 28px rgba(24,27,32,0.05); }
+  .split-panel h5{ font-family:'JetBrains Mono', monospace; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:4px; }
+  .split-panel .verdict{ font-family:'JetBrains Mono', monospace; font-size:0.68rem; padding:2px 8px; border-radius:4px; display:inline-block; margin-bottom:12px; }
+  .split-panel.bad .verdict{ background:var(--red-soft); color:var(--red); }
+  .split-panel.good .verdict{ background:var(--green-soft); color:var(--green); }
+  .split-panel p.d{ font-size:0.8rem; color:var(--ink-soft); margin-top:10px; }
+
+  .step-list{ counter-reset:step; list-style:none; margin:14px 0 0; }
+  .step-list li{ counter-increment:step; position:relative; padding-left:34px; margin-bottom:14px; color:var(--ink-soft); font-size:0.92rem;}
+  .step-list li::before{ content: counter(step); position:absolute; left:0; top:0; width:22px; height:22px; border-radius:5px; background:var(--ink); color:var(--paper); font-family:'JetBrains Mono', monospace; font-size:0.72rem; display:flex; align-items:center; justify-content:center; }
+  .step-list li strong{ color:var(--ink); }
+
+  .reason-code{ display:inline-block; font-family:'JetBrains Mono', monospace; font-size:0.72rem; background:var(--paper-2); border:1px solid var(--line); padding:2px 8px; border-radius:4px; color:var(--ink); }
+
+  .limits-grid{ display:grid; gap:12px; margin-top:16px; }
+  .limit-item{ display:flex; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:15px 18px; box-shadow:0 1px 2px rgba(24,27,32,0.03), 0 6px 16px rgba(24,27,32,0.04); }
+  .limit-item .lbl{ font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:var(--red); flex-shrink:0; padding-top:2px; }
+  .limit-item p{ color:var(--ink-soft); font-size:0.88rem; }
+
+  .rec-list{ display:flex; flex-direction:column; gap:14px; margin-top:16px; }
+  .rec-item{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:19px 22px; display:flex; gap:16px; align-items:flex-start; box-shadow:0 1px 2px rgba(24,27,32,0.04), 0 8px 20px rgba(24,27,32,0.04); }
+  .rec-rank{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:1.3rem; color:var(--box-blue); flex-shrink:0; width:28px; }
+  .rec-item h4{ font-family:'Space Grotesk', sans-serif; font-size:1rem; margin-bottom:5px; }
+  .rec-item p{ color:var(--ink-soft); font-size:0.88rem; }
+
+  .repro-links{ display:flex; flex-direction:column; gap:10px; margin-top:16px; }
+  .repro-links a{ display:flex; align-items:center; gap:10px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:13px 18px; font-family:'JetBrains Mono', monospace; font-size:0.82rem; color:var(--box-blue); box-shadow:0 1px 2px rgba(24,27,32,0.03), 0 6px 16px rgba(24,27,32,0.04); transition:border-color .15s ease; }
+  .repro-links a:hover{ border-color:var(--box-blue); }
+
+  .credit-box{ background:var(--ink); color:var(--paper); border-radius:16px; padding:34px 28px; text-align:center; position:relative; overflow:hidden; }
+  .credit-box::before{ content:''; position:absolute; top:-40%; right:-10%; width:280px; height:280px; background:radial-gradient(circle, rgba(47,92,255,0.25), transparent 70%); pointer-events:none; }
+  .credit-box p{ color:#C4C7CE; font-size:0.92rem; margin-bottom:14px; }
+  .credit-box a.flylink{ display:inline-flex; align-items:center; gap:8px; font-family:'JetBrains Mono', monospace; font-size:0.85rem; color:#9DB2FF; border:1px solid rgba(157,178,255,0.4); background:rgba(255,255,255,0.06); padding:8px 16px; border-radius:20px; }
+
+  footer{ padding:32px 0; text-align:center; }
+  footer p{ font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:var(--ink-soft); }
+  footer a{ color:var(--box-blue); }
+
+  @media (max-width:640px){
+    section{ padding:44px 0; }
+    .toc-scroll{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+
+<header>
+  <div class="nav-inner">
+    <div class="logo"><span class="dot"></span>Summaya<span class="mono" style="color:var(--ink-soft); font-weight:400; font-size:0.75rem;">.ai / paper</span></div>
+    <nav class="toc-scroll">
+      <a href="#abstract">Abstract</a>
+      <a href="#intro">Problem</a>
+      <a href="#data">Data</a>
+      <a href="#method">Method</a>
+      <a href="#results">Results</a>
+      <a href="#limits">Limits</a>
+      <a href="#recs">Recommendations</a>
+      <a href="#repro">Reproduce</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <section class="hero" id="top">
+    <div class="eyebrow-row">
+      <span class="tag">class: Machine Learning · Search Content</span>
+      <span class="tag green">status: capstone paper</span>
+    </div>
+    <h1>A model that looked <span class="strike">90% precise</span> — until it met clients it had never seen. <span class="accent">Then it looked like a coin flip.</span></h1>
+    <div class="byline">Summaya Shaikh · FlyRank ML Internship, Machine Learning track · <a href="https://github.com/summayashaikh079-stack/flyrank-ml-week1" target="_blank">github.com/summayashaikh079-stack/flyrank-ml-week1</a></div>
+
+    <div class="signature bbox">
+      <span class="conf-label mono">honest_eval: confirmed</span>
+      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+      <div class="sig-grid">
+        <div>
+          <div class="sig-num red">0.90 <span style="font-size:1rem; text-decoration:line-through; color:var(--ink-soft);">→</span> 0.54</div>
+          <div class="sig-label">Precision@50, naive split → honest split</div>
+          <div class="sig-sub">The model's headline score, before and after evaluating it the way it would actually be used: on clients it never trained on.</div>
+        </div>
+        <div>
+          <div class="sig-num blue">79M</div>
+          <div class="sig-label">rows in the production search warehouse this work is built on</div>
+          <div class="sig-sub">Real FlyRank client search-performance data — not a toy dataset.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ABSTRACT -->
+  <section id="abstract">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">01</span><span class="rule"></span></div>
+      <h2>Abstract</h2>
+    </div>
+    <div class="prose">
+      <p><strong>Question:</strong> can a machine-learning model rank FlyRank content pages by refresh priority more reliably than a simple CTR-vs-position rule a content editor could apply by hand?</p>
+      <p><strong>Data:</strong> this work is built on FlyRank's production search-performance warehouse — <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">fact_content_daily_performance</code>, 78,835,655 rows — worked through a March 2026 window (9,841,378 rows across 55 clients) and a 30,000-row anonymized modeling sample spanning 32 clients.</p>
+      <p><strong>Method:</strong> a Random Forest classifier trained to flag declining content was benchmarked against a position-bucket CTR-gap rule, then validated two ways — a naive random row split and an honest client-grouped split — because the model's real job is scoring clients it has never trained on.</p>
+      <p><strong>Result:</strong> the naive split reported ROC AUC 0.758 and Precision@50 0.90; the honest, client-grouped split dropped that to ROC AUC 0.610 and Precision@50 0.54 — statistically close to the 0.511 base rate, meaning the model does not yet show a measured edge over guessing at the top of the queue, let alone over the baseline rule.</p>
+      <p><strong>What it's for:</strong> decision support only — the model and the rule can both seed a queue for a human editor to review, but neither is accurate enough, on this feature set, to rank pages unsupervised.</p>
+    </div>
+  </section>
+
+  <!-- INTRO -->
+  <section id="intro">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">02</span><span class="rule"></span></div>
+      <h2>Introduction — the decision this supports</h2>
+    </div>
+    <div class="prose">
+      <p>A FlyRank content editor manages hundreds of client pages at once. Every month, some of those pages are quietly losing search visibility — falling impressions, softening clicks — while most are stable. The editor can't manually re-check every page every month, so the real decision is: <strong>which handful of pages get a human look first?</strong></p>
+      <p>Getting this wrong has two costs. Reviewing a page that's actually fine wastes an editor's limited hours. Missing a page that's genuinely declining means a client loses traffic for another month before anyone notices. Neither error is free, which is why a ranked, reason-coded queue — not a black-box verdict — is the right shape for this problem.</p>
+      <p>A single fixed rule ("flag anything trending down") ignores that normal click-through rates vary hugely by where a page ranks and what kind of content it is. A ranking model can, in principle, weigh several signals — position, click history, content age, engagement — at once. This paper tests whether it actually does, once evaluated honestly.</p>
+    </div>
+  </section>
+
+  <!-- DATA -->
+  <section id="data">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">03</span><span class="rule"></span></div>
+      <h2>Data</h2>
+    </div>
+    <div class="prose">
+      <p>The source is FlyRank's internal search-intelligence warehouse: <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">fact_content_daily_performance</code> joined with <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">dim_content</code> and <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">dim_clients</code>. One row is one (report date × client × content item) daily performance record.</p>
+    </div>
+    <div class="info-card">
+      <div class="info-row"><span class="k">FULL WAREHOUSE TABLE</span><span class="v">78,835,655 rows</span></div>
+      <div class="info-row"><span class="k">WORKING WINDOW</span><span class="v">March 2026 (month=2026-03)</span></div>
+      <div class="info-row"><span class="k">ROWS IN WINDOW</span><span class="v">9,841,378 across 55 clients</span></div>
+      <div class="info-row"><span class="k">SEARCH-CONSOLE COVERAGE</span><span class="v">36.7% of rows (3,611,061)</span></div>
+      <div class="info-row"><span class="k">MODELING SAMPLE</span><span class="v">30,000 rows · 32 clients</span></div>
+      <div class="info-row"><span class="k">DECLINING-LABEL RATE</span><span class="v">54.2% (base rate)</span></div>
+    </div>
+    <div class="prose">
+      <p><strong>Deliberately excluded:</strong> <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">client_hash_id</code> and <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">content_hash_id</code> are pseudonymized IDs used only for grouping and splitting — never as model features. Rows where <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">gsc_data_available</code> is null or false are excluded, since they mean "not measured," not "measured at zero."</p>
+      <p>A real data limit worth stating plainly: Search Console coverage is only 36.7% for this window. That's a per-client access gap, not a random sample — most content items simply have no search-console data this month. Conclusions here are decision-support for Search-Console-connected clients, not a general claim about the whole catalog.</p>
+      <p>No client names, page URLs, or raw search queries appear anywhere in this analysis or its underlying notebooks — every identifier is a pseudonymous hash used only for joining and grouping.</p>
+    </div>
+  </section>
+
+  <!-- METHODOLOGY -->
+  <section id="method">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">04</span><span class="rule"></span></div>
+      <h2>Methodology</h2>
+    </div>
+    <div class="prose">
+      <p><strong>Task framing.</strong> This is a ranking/scoring task: score each content page by refresh-worthiness so pages can be ordered from most to least in need of review. There's no ground-truth "needs refresh" label, so the target is a proxy: <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">is_declining_label</code>, set to 1 when a page's <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">trend_direction</code> is "down." A proxy, not an outcome — this is one of the honest limits in Section 06.</p>
+      <p><strong>Baseline.</strong> A transparent rule: flag content whose observed click-through rate sits meaningfully below the average CTR of other content in the same search-position bucket, restricted to rows with at least 50 impressions so the gap isn't noise. The position-bucket signal behind this rule held up under testing — average CTR drops cleanly from 0.48% (positions 1–3) to 0.13% (positions 21+), a <span class="reason-code">CONFIRMED</span> signal.</p>
+      <p><strong>Model.</strong> A Random Forest classifier (200 trees, max depth 10, min 25 samples per leaf, balanced class weighting) trained on 18 numeric features (log-scaled traffic and engagement aggregates, content age, position, CTR, scroll rate) and 8 categorical features (content type, intent, freshness tier, and similar), with <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">trend_direction</code> and <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">trend_pct</code> — the label's own source columns — explicitly excluded from the feature set.</p>
+      <p><strong>Validation design — the part that matters most.</strong> The model was scored two ways on the identical data, features, and metric:</p>
+      <ul>
+        <li><strong>Naive split:</strong> a random 80/20 row split, stratified by label. The same client can appear in both training and test.</li>
+        <li><strong>Honest split:</strong> a <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">GroupShuffleSplit</code> by client — a client's rows land entirely in train or entirely in test, never both. Confirmed: 0 client overlap.</li>
+      </ul>
+      <p>The grouped split is the honest one because it mirrors the real use case: scoring pages for clients the model has never seen data from, not clients it partially memorized during training.</p>
+
+      <div class="split-diagram">
+        <div class="split-panel bad">
+          <h5 class="mono" style="color:var(--red);">Naive — random row split</h5>
+          <span class="verdict">optimistic, misleading</span>
+          <svg viewBox="0 0 260 90" style="width:100%; height:auto;">
+            <text x="4" y="14" font-family="JetBrains Mono, monospace" font-size="9" fill="#54585F">train</text>
+            <text x="4" y="52" font-family="JetBrains Mono, monospace" font-size="9" fill="#54585F">test</text>
+            <g id="rowdots">
+            <circle cx="40" cy="24" r="5" fill="#2F5CFF"/><circle cx="56" cy="24" r="5" fill="#D98E2B"/><circle cx="72" cy="24" r="5" fill="#1E8E5A"/><circle cx="88" cy="24" r="5" fill="#2F5CFF"/><circle cx="104" cy="24" r="5" fill="#C43D3D"/><circle cx="120" cy="24" r="5" fill="#D98E2B"/><circle cx="136" cy="24" r="5" fill="#1E8E5A"/><circle cx="152" cy="24" r="5" fill="#2F5CFF"/><circle cx="168" cy="24" r="5" fill="#C43D3D"/><circle cx="184" cy="24" r="5" fill="#1E8E5A"/>
+            <circle cx="40" cy="62" r="5" fill="#D98E2B"/><circle cx="56" cy="62" r="5" fill="#2F5CFF"/><circle cx="72" cy="62" r="5" fill="#C43D3D"/><circle cx="88" cy="62" r="5" fill="#1E8E5A"/><circle cx="104" cy="62" r="5" fill="#2F5CFF"/>
+            </g>
+            <text x="205" y="46" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#C43D3D">same client</text>
+            <text x="205" y="57" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#C43D3D">both sides</text>
+          </svg>
+          <p class="d">Each colour is one client. The same client's rows land in <strong>both</strong> train and test — the model can partly memorize a client, then get "tested" on that same client.</p>
+        </div>
+        <div class="split-panel good">
+          <h5 class="mono" style="color:var(--green);">Honest — client-grouped split</h5>
+          <span class="verdict">what this paper reports</span>
+          <svg viewBox="0 0 260 90" style="width:100%; height:auto;">
+            <text x="4" y="14" font-family="JetBrains Mono, monospace" font-size="9" fill="#54585F">train</text>
+            <text x="4" y="52" font-family="JetBrains Mono, monospace" font-size="9" fill="#54585F">test</text>
+            <circle cx="40" cy="24" r="5" fill="#2F5CFF"/><circle cx="56" cy="24" r="5" fill="#2F5CFF"/><circle cx="72" cy="24" r="5" fill="#D98E2B"/><circle cx="88" cy="24" r="5" fill="#D98E2B"/><circle cx="104" cy="24" r="5" fill="#D98E2B"/><circle cx="120" cy="24" r="5" fill="#1E8E5A"/><circle cx="136" cy="24" r="5" fill="#1E8E5A"/><circle cx="152" cy="24" r="5" fill="#2F5CFF"/><circle cx="168" cy="24" r="5" fill="#1E8E5A"/><circle cx="184" cy="24" r="5" fill="#D98E2B"/>
+            <circle cx="40" cy="62" r="5" fill="#C43D3D"/><circle cx="56" cy="62" r="5" fill="#C43D3D"/><circle cx="72" cy="62" r="5" fill="#C43D3D"/><circle cx="88" cy="62" r="5" fill="#C43D3D"/><circle cx="104" cy="62" r="5" fill="#C43D3D"/>
+            <text x="205" y="46" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#1E8E5A">0 clients</text>
+            <text x="205" y="57" font-family="JetBrains Mono, monospace" font-size="8.5" fill="#1E8E5A">overlap</text>
+          </svg>
+          <p class="d">Every client's rows stay on <strong>one</strong> side only. The red client in test was never seen in training — this is what actually tests generalization.</p>
+        </div>
+      </div>
+      <p><strong>Leakage check.</strong> To confirm the evaluation harness itself was trustworthy, <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">trend_pct</code> — the label's direct source — was deliberately reintroduced as a feature. ROC AUC jumped from 0.610 to 1.000, exactly the signature of a leak. Removing it again confirmed the real feature set (Section above) contains no such leakage.</p>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="results">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">05</span><span class="rule"></span></div>
+      <h2>Results — model vs baseline, same split</h2>
+    </div>
+    <div class="prose">
+      <p>Same data, same features, same metric — split strategy is the only thing that changes between these two rows. The gap between them is the entire finding of this paper.</p>
+    </div>
+    <table class="data-table">
+      <thead><tr><th>Split strategy</th><th>ROC AUC</th><th>Precision@50</th><th>Base rate</th></tr></thead>
+      <tbody>
+        <tr class="dim"><td>Naive — random row split</td><td>0.758</td><td>0.90</td><td>0.542</td></tr>
+        <tr class="hl"><td>Honest — client-grouped split</td><td>0.610</td><td>0.54</td><td>0.511</td></tr>
+        <tr><td>Leakage-check split (trend_pct deliberately re-added)</td><td>1.000</td><td>—</td><td>—</td></tr>
+      </tbody>
+    </table>
+
+    <div class="chart-card">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
+        <span style="font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:1rem; color:var(--ink);">Precision@50 — before vs after honest validation</span>
+        <span class="tag" style="margin:0;">chart</span>
+      </div>
+      <svg viewBox="0 0 700 280" style="width:100%; height:auto;" xmlns="http://www.w3.org/2000/svg">
+        <!-- gridlines -->
+        <g stroke="#181B20" stroke-opacity="0.08" stroke-width="1">
+          <line x1="60" y1="30" x2="660" y2="30"/>
+          <line x1="60" y1="76" x2="660" y2="76"/>
+          <line x1="60" y1="122" x2="660" y2="122"/>
+          <line x1="60" y1="168" x2="660" y2="168"/>
+          <line x1="60" y1="214" x2="660" y2="214"/>
+        </g>
+        <g font-family="JetBrains Mono, monospace" font-size="9.5" fill="#54585F" opacity="0.7">
+          <text x="52" y="34" text-anchor="end">1.0</text>
+          <text x="52" y="80" text-anchor="end">0.75</text>
+          <text x="52" y="126" text-anchor="end">0.5</text>
+          <text x="52" y="172" text-anchor="end">0.25</text>
+          <text x="52" y="218" text-anchor="end">0</text>
+        </g>
+        <line x1="60" y1="214" x2="660" y2="214" stroke="#181B20" stroke-opacity="0.22" stroke-width="1.2"/>
+
+        <!-- base-rate reference dashed line -->
+        <line x1="60" y1="120.4" x2="660" y2="120.4" stroke="#54585F" stroke-width="1.3" stroke-dasharray="5 4" opacity="0.55"/>
+        <text x="663" y="123.4" font-family="JetBrains Mono, monospace" font-size="9" fill="#54585F" opacity="0.75">base rate ≈0.51</text>
+
+        <!-- bars -->
+        <rect x="150" y="49.6" width="100" height="164.4" rx="6" fill="#C43D3D"/>
+        <text x="200" y="38" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="17" fill="#C43D3D" font-weight="700">0.90</text>
+        <text x="200" y="236" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-size="12" font-weight="600" fill="#181B20">Naive split</text>
+        <text x="200" y="252" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#54585F">random rows</text>
+
+        <rect x="350" y="115.4" width="100" height="98.6" rx="6" fill="#2F5CFF"/>
+        <text x="400" y="103.4" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="17" fill="#2F5CFF" font-weight="700">0.54</text>
+        <text x="400" y="236" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-size="12" font-weight="600" fill="#181B20">Honest split</text>
+        <text x="400" y="252" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#54585F">client-grouped</text>
+
+        <rect x="550" y="120.4" width="100" height="93.6" rx="6" fill="#54585F" opacity="0.3"/>
+        <text x="600" y="108.4" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="17" fill="#54585F" font-weight="700">0.51</text>
+        <text x="600" y="236" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-size="12" font-weight="600" fill="#181B20">Base rate</text>
+        <text x="600" y="252" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#54585F">guessing</text>
+
+        <!-- drop annotation arrow -->
+        <path d="M 250 90 C 300 90, 300 150, 348 158" stroke="#181B20" stroke-width="1.2" fill="none" stroke-dasharray="3 3" opacity="0.4"/>
+        <text x="270" y="82" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#181B20" opacity="0.55">−40 pts</text>
+      </svg>
+      <div class="chart-caption"><strong>Reading it:</strong> the honest split's score (0.54) sits just above the base rate (0.51) — a small, not clearly meaningful, edge. The naive split's 0.90 was measuring the model's memory of clients it had already partly seen, not its ability to generalize.</div>
+    </div>
+
+    <div class="prose">
+      <p><strong>Rewriting the claim, honestly.</strong> The bold version of this result — "Random Forest beats the rule-based baseline for flagging declining content" — was true only under the naive split. The safe, evidence-backed version: on held-out clients, the Random Forest score shows no measured advantage over the rule baseline at Precision@50; both sit close to the base rate. The model's random-split number reflected client memorization, not generalizable skill.</p>
+    </div>
+  </section>
+
+  <!-- LIMITATIONS -->
+  <section id="limits">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">06</span><span class="rule"></span></div>
+      <h2>Limitations &amp; honest framing</h2>
+    </div>
+    <div class="prose"><p>What this work cannot claim, stated before a reader has to ask:</p></div>
+    <div class="limits-grid">
+      <div class="limit-item"><span class="lbl mono">01</span><p><strong>No generalization advantage shown yet.</strong> Under honest, client-grouped validation, the model does not clearly outperform the simple rule or the base rate at the top of the ranked queue.</p></div>
+      <div class="limit-item"><span class="lbl mono">02</span><p><strong>Proxy label, not ground truth.</strong> "Declining" is defined from a trend-direction rule, not a verified editorial outcome — the model may be learning to predict the proxy's own arithmetic rather than real refresh-worthiness.</p></div>
+      <div class="limit-item"><span class="lbl mono">03</span><p><strong>Single month, no seasonality control.</strong> A genuinely seasonal page could be misflagged as declining during an off-season dip; this analysis can't tell the two apart.</p></div>
+      <div class="limit-item"><span class="lbl mono">04</span><p><strong>Search Console coverage gap.</strong> Only 36.7% of rows in the working window have Search Console data — an access gap, not a random sample, so findings apply to connected clients only.</p></div>
+      <div class="limit-item"><span class="lbl mono">05</span><p><strong>Modeling sample is a slice.</strong> The model was trained and evaluated on a 30,000-row, 32-client anonymized release, not the full 79M-row warehouse — results should be re-checked at full scale before any production use.</p></div>
+      <div class="limit-item"><span class="lbl mono">06</span><p><strong>No page text.</strong> Content type is the only content-level feature; the model can point at which pages likely need a snippet rewrite, never suggest what the new title or meta description should say.</p></div>
+    </div>
+  </section>
+
+  <!-- RECOMMENDATIONS -->
+  <section id="recs">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">07</span><span class="rule"></span></div>
+      <h2>Ranked recommendations</h2>
+    </div>
+    <div class="prose"><p>Given the model shows no honest edge yet, the practical playbook leans on the simple rule — reason-coded, not just scored — as today's queue:</p></div>
+    <div class="rec-list">
+      <div class="rec-item">
+        <div class="rec-rank mono">01</div>
+        <div><h4>Ship the rule-based queue, not the model, today</h4><p>The CTR-vs-position rule is simpler, equally honest under testing, and needs no retraining upkeep. Use it as this month's starting queue.</p></div>
+      </div>
+      <div class="rec-item">
+        <div class="rec-rank mono">02</div>
+        <div><h4><span class="reason-code">R1_HIGH_RANK_LOW_CTR</span> → rewrite the snippet</h4><p>Page ranks well (position 1–10) but CTR trails its bucket badly. The ranking work is done — the title or meta description isn't converting impressions into clicks.</p></div>
+      </div>
+      <div class="rec-item">
+        <div class="rec-rank mono">03</div>
+        <div><h4><span class="reason-code">R2_LOW_RANK_ADEQUATE_CTR</span> → content/technical SEO review</h4><p>CTR is fine for its position; the position itself (11+) is the ceiling. The snippet isn't the bottleneck — visibility is.</p></div>
+      </div>
+      <div class="rec-item">
+        <div class="rec-rank mono">04</div>
+        <div><h4><span class="reason-code">R3_LOW_VOLUME_UNRELIABLE</span> → no action, re-check next month</h4><p>Near the 50-impression floor — the CTR gap here is noise, not signal. Watch, don't act.</p></div>
+      </div>
+      <div class="rec-item">
+        <div class="rec-rank mono">05</div>
+        <div><h4>Keep a human in the loop, always</h4><p>Never auto-publish a rewritten title or auto-flag a page to a client dashboard. A person confirms relevance and checks for active campaigns before anything ships.</p></div>
+      </div>
+      <div class="rec-item">
+        <div class="rec-rank mono">06</div>
+        <div><h4>Re-run monthly; watch for these retrain triggers</h4><p>Re-check if next month's baseline error shifts more than ~10%, if the R1/R2/R3 mix shifts sharply, or if a page stays flagged for 2+ months after being actioned.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REPRODUCIBILITY -->
+  <section id="repro">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">08</span><span class="rule"></span></div>
+      <h2>Reproducibility</h2>
+    </div>
+    <div class="prose"><p>Every number above comes from a notebook in this repo. Random seed <code class="mono" style="background:var(--paper-2); padding:1px 6px; border-radius:4px;">42</code> throughout.</p></div>
+    <div class="repro-links">
+      <a href="https://github.com/summayashaikh079-stack/flyrank-ml-week1" target="_blank">→ Full repository</a>
+      <a href="https://github.com/summayashaikh079-stack/flyrank-ml-week1/blob/main/work/notebooks/w06_validation_audit.ipynb" target="_blank">→ Validation audit notebook (the naive-vs-honest split comparison)</a>
+      <a href="https://github.com/summayashaikh079-stack/flyrank-ml-week1/blob/main/work/notebooks/w07_action_playbook.ipynb" target="_blank">→ Action playbook notebook (reason codes and recommendations)</a>
+      <a href="https://github.com/summayashaikh079-stack/flyrank-ml-week1/blob/main/work/notebooks/capstone.ipynb" target="_blank">→ Capstone notebook (mirrors this paper end to end)</a>
+    </div>
+  </section>
+
+  <!-- ACKNOWLEDGMENTS -->
+  <section id="credit">
+    <div class="sec-head">
+      <div class="sec-eyebrow"><span class="idx mono">09</span><span class="rule"></span></div>
+      <h2>Acknowledgments &amp; data credit</h2>
+    </div>
+    <div class="credit-box">
+      <p>Built on the FlyRank ML Internship dataset — 79 million rows of real production search-performance data, made available for this internship program.</p>
+      <a href="https://flyrank.ai" target="_blank" class="flylink mono">flyrank.ai ↗</a>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <p>© 2026 Summaya Shaikh · FlyRank ML Internship capstone · <a href="https://summaya-portfollo.netlify.app" target="_blank">summaya-portfollo.netlify.app</a></p>
+</footer>
+
+</body>
+</html>
